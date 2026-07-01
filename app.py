@@ -1,33 +1,23 @@
 Python
 import streamlit as st
 import pandas as pd
+import google.generativeai as genai
+import PIL.Image
 
-st.set_page_config(page_title="QM 자동화", layout="centered")
-st.title("🚢 조선소 QM 코멘트 자동화")
-st.write("사진을 올리고, 아래 칸에 내용을 직접 입력하면 엑셀 양식으로 저장됩니다.")
+# 1. API 키 설정 (보안상 동료들과 쓸 때는 환경변수로 처리하거나, 입력받도록 설정)
+api_key = st.text_input("구글 AI API 키를 입력하세요", type="password")
 
-# 1. 파일 업로드 (이미지 확인용)
-uploaded_file = st.file_uploader("검사 결과 사진 업로드", type=['jpg', 'png'])
+if api_key:
+    genai.configure(api_key=api_key)
+    model = genai.GenerativeModel('gemini-1.5-flash')
 
-# 2. 정보 입력 칸
-hull_no = st.text_input("호선번호", placeholder="예: H1234")
-title = st.text_input("제목(검사명)", placeholder="검사명을 입력하세요")
-content = st.text_area("코멘트 내용", placeholder="코멘트 내용을 입력하세요")
+    uploaded_file = st.file_uploader("검사 결과(사진/PDF) 업로드", type=['png', 'jpg', 'jpeg'])
 
-# 3. 엑셀 다운로드 버튼
-if st.button("엑셀 양식 생성"):
-    data = {
-        '호선번호': [hull_no],
-        '제목': [title],
-        '코멘트 내용': [content]
-    }
-    df = pd.DataFrame(data)
-    
-    csv = df.to_csv(index=False, encoding='utf-8-sig')
-    st.download_button(
-        label="📥 엑셀(CSV) 다운로드",
-        data=csv,
-        file_name='QM_Comment.csv',
-        mime='text/csv'
-    )
-    st.success("준비되었습니다! 다운로드 버튼을 누르세요.")
+    if uploaded_file and st.button("AI 자동 분석 시작"):
+        img = PIL.Image.open(uploaded_file)
+        # AI에게 분석 요청
+        prompt = "이 사진에서 호선번호, 제목, 코멘트 내용을 추출해서 표 형식으로 정리해줘."
+        response = model.generate_content([prompt, img])
+        
+        st.write("분석 결과:", response.text)
+        # 이후 이 결과를 엑셀로 다운로드하는 버튼 구현...
