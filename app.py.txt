@@ -1,0 +1,109 @@
+import streamlit as st
+import pandas as pd
+import pytesseract
+from PIL import Image
+import re
+
+# 1. 엑셀 양식 헤더 정의 (업로드해주신 양식 기준 39개 항목)
+EXCEL_COLUMNS = [
+    '호선번호', '문서종류', '공종코드', '코멘트\nSequence', '선주코멘트\nSequence', 
+    '호선번호\nORG', '문서종류\nORG', '공종코드\nORG', '코멘트 Sequence\nORG', '중요도\n코드', 
+    '제목', '코멘트 내용', 'QM\n추가의견', '결함코드', '선종', 
+    '구역번호', '상세구역', '발행일자', '발행자\n사번', 'QM담당자\n사번', 
+    '조치부서\n기능코드1', '조치담당자\n사번1', '조치부서\n기능코드2', '조치담당자\n사번2', '조치부서\n기능코드3', 
+    '조치담당자\n사번3', '조치부서\n기능코드4', '조치담당자\n사번4', '결함원인\n부서코드', '검사\nACT No', 
+    '선원/장비명', '파일경로', '결함원인\n업체코드', '업로드 성공여부', 'DB 성공\n여부', 
+    'DB 에러 \n메세지', '파일 성공\n여부', '파일 에러 \n메세지', '저장파일수'
+]
+
+# 2. 🌟 이곳이 핵심입니다: 추출된 텍스트를 엑셀 항목에 연결(매핑)하는 함수
+def parse_comment_text(extracted_text):
+    """
+    OCR로 추출한 전체 텍스트(extracted_text)에서 필요한 정보를 뽑아내어
+    딕셔너리 형태로 반환하는 로직입니다.
+    """
+    # 기본값으로 빈 데이터를 채워 넣습니다.
+    parsed_data = {col: "" for col in EXCEL_COLUMNS}
+    
+    # =========================================================================
+    # [사용자 지정 공간] 
+    # 사진에서 추출되는 텍스트의 패턴에 맞춰 아래 로직을 수정(지정)해 주세요!
+    # =========================================================================
+    
+    # 예시 1: 정규식(Regex)을 사용하여 '호선번호' 추출 (예: H1234, S5678 등)
+    hull_match = re.search(r'(H\d{4}|S\d{4})', extracted_text)
+    if hull_match:
+        parsed_data['호선번호'] = hull_match.group(1)
+        
+    # 예시 2: '코멘트 내용' 추출 (특정 단어 뒤의 문장을 가져오는 방법)
+    # 만약 사진에 "Comment: 도장 불량 수정 요망" 이라고 적혀 있다면:
+    comment_match = re.search(r'Comment:\s*(.*)', extracted_text)
+    if comment_match:
+        parsed_data['코멘트 내용'] = comment_match.group(1).strip()
+    else:
+        # 패턴이 없을 경우 추출된 전체 텍스트를 일단 코멘트에 넣습니다 (확인용)
+        parsed_data['코멘트 내용'] = extracted_text.replace('\n', ' ')
+
+    # 예시 3: '문서종류' 강제 지정 (항상 같은 값이 들어가는 경우)
+    parsed_data['문서종류'] = "OWI" # 예: Owner Inspection
+    parsed_data['중요도\n코드'] = "3" # 예: 상(LC)
+    
+    # =========================================================================
+    return parsed_data
+
+# 3. Streamlit 대시보드 UI 구성
+st.set_page_config(page_title="QM 코멘트 자동화", layout="wide")
+st.title("🚢 조선소 QM 코멘트 엑셀 자동화 대시보드")
+st.markdown("사진을 업로드하면 내용을 인식하여 정해진 엑셀 양식에 맞게 변환합니다.")
+
+# 세션 상태로 데이터프레임 누적 관리 (여러 장 올릴 경우를 대비)
+if 'df_result' not in st.session_state:
+    st.session_state.df_result = pd.DataFrame(columns=EXCEL_COLUMNS)
+
+# 파일 업로더 (여러 장 동시 업로드 가능)
+uploaded_files = st.file_uploader("검사 코멘트 사진 파일 업로드", type=['jpg', 'jpeg', 'png'], accept_multiple_files=True)
+
+if uploaded_files:
+    if st.button("문서 분석 및 엑셀 변환 시작"):
+        with st.spinner("이미지에서 텍스트를 추출하고 분석하는 중입니다..."):
+            new_rows = []
+            
+            for file in uploaded_files:
+                try:
+                    # 이미지 열기 및 OCR 적용
+                    image = Image.open(file)
+                    
+                    # 팁: 한글/영어가 섞여있다면 lang='kor+eng' 적용 (테서랙트 언어팩 설치 필요)
+                    extracted_text = pytesseract.image_to_string(image, lang='kor+eng')
+                    
+                    # 매핑 함수 적용
+                    parsed_row = parse_comment_text(extracted_text)
+                    new_rows.append(parsed_row)
+                    
+                except Exception as e:
+                    st.error(f"{file.name} 처리 중 오류 발생: {e}")
+            
+            # 분석된 데이터를 기존 데이터프레임에 추가
+            if new_rows:
+                new_df = pd.DataFrame(new_rows)
+                st.session_state.df_result = pd.concat([st.session_state.df_result, new_df], ignore_index=True)
+                st.success(f"총 {len(new_rows)}건의 코멘트가 성공적으로 변환되었습니다!")
+
+# 4. 결과 확인 및 엑셀 다운로드
+if not st.session_state.df_result.empty:
+    st.subheader("📊 변환된 엑셀 데이터 미리보기")
+    # 데이터 수정이 가능하게 띄워줍니다 (필요시 수동으로 오타 수정 가능)
+    edited_df = st.data_editor(st.session_state.df_result, num_rows="dynamic")
+    
+    # 엑셀 다운로드 버튼 (CSV 형태로 저장)
+    csv = edited_df.to_csv(index=False).encode('utf-8-sig')
+    st.download_button(
+        label="📥 엑셀 양식(CSV) 다운로드",
+        data=csv,
+        file_name='업로드용_코멘트양식.csv',
+        mime='text/csv',
+    )
+    
+    if st.button("초기화 (데이터 삭제)"):
+        st.session_state.df_result = pd.DataFrame(columns=EXCEL_COLUMNS)
+        st.rerun()
